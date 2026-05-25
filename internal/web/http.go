@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"r0rpc/internal/app"
 	"r0rpc/internal/auth"
 	"r0rpc/internal/model"
 	"r0rpc/internal/rpc"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +52,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/users/{id}/status", s.requireRole("admin", s.handlePatchUserStatus))
 	mux.HandleFunc("PATCH /api/users/{id}/password", s.requireRole("admin", s.handlePatchUserPassword))
 	mux.HandleFunc("GET /api/groups", s.requireRole("admin", s.handleGroups))
+	mux.HandleFunc("POST /api/groups", s.requireRole("admin", s.handleCreateGroup))
+	mux.HandleFunc("PATCH /api/groups/{name}/status", s.requireRole("admin", s.handlePatchGroupStatus))
 	mux.HandleFunc("GET /api/devices", s.requireRole("admin", s.handleDevices))
 	mux.HandleFunc("GET /api/monitor/requests", s.requireRole("admin", s.handleMonitorRequests))
 	mux.HandleFunc("GET /api/monitor/request-options", s.requireRole("admin", s.handleMonitorRequestOptions))
@@ -250,6 +252,53 @@ func (s *Server) handleGroups(w http.ResponseWriter, r *http.Request, claims *au
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request, claims *auth.Claims) {
+	var req struct {
+		Name    string `json:"name"`
+		Group   string `json:"group"`
+		Enabled *bool  `json:"enabled"`
+		Notes   string `json:"notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = strings.TrimSpace(req.Group)
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	group, err := s.App.Store.CreateGroup(r.Context(), name, enabled, req.Notes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, group)
+}
+
+func (s *Server) handlePatchGroupStatus(w http.ResponseWriter, r *http.Request, claims *auth.Claims) {
+	groupName := strings.TrimSpace(r.PathValue("name"))
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.App.Store.UpdateGroupStatus(r.Context(), groupName, req.Enabled); err != nil {
+		if app.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, &app.GroupError{Kind: app.ErrGroupNotFound, Group: groupName})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request, claims *auth.Claims) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
@@ -275,6 +324,14 @@ func (s *Server) handleRPCClientQueue(w http.ResponseWriter, r *http.Request) {
 	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
 	if groupName == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("group required"))
+		return
+	}
+	if err := s.App.EnsureGroupActive(r.Context(), groupName); err != nil {
+		if status, ok := groupErrorHTTPStatus(err); ok {
+			writeError(w, status, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -417,6 +474,10 @@ func (s *Server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	token, user, err := s.App.LoginClient(r.Context(), req.Username, req.Password, req.ClientID, req.Group, req.Platform, req.MaxInFlight, req.Extra, s.App.RemoteIP(r))
 	if err != nil {
+		if status, ok := groupErrorHTTPStatus(err); ok {
+			writeError(w, status, err)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
@@ -432,6 +493,10 @@ func (s *Server) handleClientPoll(w http.ResponseWriter, r *http.Request, claims
 	defer cancel()
 	job, err := s.App.PollClient(ctx, claims, time.Duration(waitSeconds)*time.Second, s.App.RemoteIP(r))
 	if err != nil {
+		if status, ok := groupErrorHTTPStatus(err); ok {
+			writeError(w, status, err)
+			return
+		}
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -468,6 +533,10 @@ func (s *Server) handleClientResult(w http.ResponseWriter, r *http.Request, clai
 	}
 	err := s.App.SubmitClientResult(r.Context(), claims, result)
 	if err != nil {
+		if status, ok := groupErrorHTTPStatus(err); ok {
+			writeError(w, status, err)
+			return
+		}
 		if errors.Is(err, rpc.ErrResultClientMismatch) {
 			writeError(w, http.StatusConflict, err)
 			return
@@ -504,6 +573,12 @@ func (s *Server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		status := "failed"
 		httpCode := http.StatusBadGateway
 		switch {
+		case errors.Is(err, app.ErrGroupNotFound):
+			status = "group_not_found"
+			httpCode = http.StatusNotFound
+		case errors.Is(err, app.ErrGroupDisabled):
+			status = "group_disabled"
+			httpCode = http.StatusForbidden
 		case errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.TrimSpace(err.Error()), "context deadline exceeded"):
 			status = "timeout"
 			httpCode = http.StatusGatewayTimeout
@@ -697,6 +772,17 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
+}
+
+func groupErrorHTTPStatus(err error) (int, bool) {
+	switch {
+	case errors.Is(err, app.ErrGroupNotFound):
+		return http.StatusNotFound, true
+	case errors.Is(err, app.ErrGroupDisabled):
+		return http.StatusForbidden, true
+	default:
+		return 0, false
+	}
 }
 
 func jsonBodyOrEmpty(raw json.RawMessage) json.RawMessage {

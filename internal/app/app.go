@@ -34,10 +34,34 @@ const (
 	defaultPersistQueueSize      = 131072
 	defaultPersistWorkerCount    = 32
 	defaultClientQueueSize       = 2048
-	defaultRawScopeKeepLatest    = 100
 	persistTaskTimeout           = 15 * time.Second
 	persistEnqueueWait           = 250 * time.Millisecond
 )
+
+var (
+	ErrGroupNotFound = errors.New("group not found")
+	ErrGroupDisabled = errors.New("group disabled")
+)
+
+type GroupError struct {
+	Kind  error
+	Group string
+}
+
+func (e *GroupError) Error() string {
+	switch e.Kind {
+	case ErrGroupNotFound:
+		return fmt.Sprintf("group %q has not been created; create it in Group management before use", e.Group)
+	case ErrGroupDisabled:
+		return fmt.Sprintf("group %q is disabled; enable it in Group management before use", e.Group)
+	default:
+		return fmt.Sprintf("group %q is not available", e.Group)
+	}
+}
+
+func (e *GroupError) Unwrap() error {
+	return e.Kind
+}
 
 type persistTaskKind string
 
@@ -142,7 +166,7 @@ func (a *App) StartBackgroundJobs(ctx context.Context) {
 			case <-maintenanceTicker.C:
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				_ = a.Store.CleanupOldRequests(cleanupCtx, a.Config.RawRetentionDays)
-				_ = a.Store.TrimAllRPCRequestScopes(cleanupCtx, defaultRawScopeKeepLatest)
+				_ = a.Store.TrimAllRPCRequestScopes(cleanupCtx, a.Config.RawRequestKeepLatest)
 				_ = a.Store.CleanupOldMetrics(cleanupCtx, a.Config.AggregateRetentionDays)
 				cancel()
 			}
@@ -171,8 +195,13 @@ func (a *App) LoginClient(ctx context.Context, username, password, clientID, gro
 	if err != nil {
 		return "", nil, err
 	}
+	clientID = strings.TrimSpace(clientID)
+	groupName = strings.TrimSpace(groupName)
 	if clientID == "" || groupName == "" {
 		return "", nil, fmt.Errorf("clientId and group are required")
+	}
+	if err := a.EnsureGroupActive(ctx, groupName); err != nil {
+		return "", nil, err
 	}
 	if platform == "" {
 		platform = "xposed"
@@ -203,11 +232,17 @@ func (a *App) LoginClient(ctx context.Context, username, password, clientID, gro
 }
 
 func (a *App) PollClient(ctx context.Context, claims *auth.Claims, wait time.Duration, ip string) (*rpc.Job, error) {
+	if err := a.EnsureGroupActive(ctx, claims.Group); err != nil {
+		return nil, err
+	}
 	a.TouchClientPresence(ctx, claims.ClientID, claims.Group, claims.UserID, claims.MaxInFlight, "xposed", ip)
 	return a.Hub.Poll(ctx, claims.ClientID, wait)
 }
 
 func (a *App) SubmitClientResult(ctx context.Context, claims *auth.Claims, result rpc.JobResult) error {
+	if err := a.EnsureGroupActive(ctx, claims.Group); err != nil {
+		return err
+	}
 	a.TouchClientPresence(ctx, claims.ClientID, claims.Group, claims.UserID, claims.MaxInFlight, "", "")
 
 	outcome, err := a.Hub.SubmitResult(claims.ClientID, result)
@@ -234,6 +269,11 @@ func (a *App) SubmitClientResult(ctx context.Context, claims *auth.Claims, resul
 
 func (a *App) InvokeRPC(ctx context.Context, claims *auth.Claims, groupName, actionName string, req InvokeRequest) (rpc.JobResult, string, string, error) {
 	requestID := randomID()
+	groupName = strings.TrimSpace(groupName)
+	actionName = strings.TrimSpace(actionName)
+	if err := a.EnsureGroupActive(ctx, groupName); err != nil {
+		return rpc.JobResult{}, requestID, "", err
+	}
 	timeout := a.Config.RequestTimeout
 	if req.Timeout > 0 && req.Timeout < 120 {
 		timeout = time.Duration(req.Timeout) * time.Second
@@ -424,6 +464,24 @@ func jsonBodyOrObject(raw json.RawMessage) any {
 		return map[string]any{}
 	}
 	return json.RawMessage(trimmed)
+}
+
+func (a *App) EnsureGroupActive(ctx context.Context, groupName string) error {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return fmt.Errorf("group is required")
+	}
+	group, err := a.Store.GetGroupByName(ctx, groupName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &GroupError{Kind: ErrGroupNotFound, Group: groupName}
+	}
+	if err != nil {
+		return err
+	}
+	if !group.Enabled {
+		return &GroupError{Kind: ErrGroupDisabled, Group: groupName}
+	}
+	return nil
 }
 
 func (a *App) VerifyTokenFromRequest(r *http.Request) (*auth.Claims, error) {

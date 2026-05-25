@@ -89,6 +89,14 @@ func (s *Server) handleClientWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
+	if err := s.App.EnsureGroupActive(r.Context(), claims.Group); err != nil {
+		if status, ok := groupErrorHTTPStatus(err); ok {
+			writeError(w, status, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	conn, err := upgradeWebSocket(w, r)
 	if err != nil {

@@ -22,6 +22,7 @@ type Config struct {
 	JWTSecret                string
 	RequestTimeout           time.Duration
 	RawRetentionDays         int
+	RawRequestKeepLatest     int
 	AggregateRetentionDays   int
 	DeviceOfflineSeconds     int
 	DeviceOfflineMinutes     int
@@ -69,9 +70,10 @@ func Load() (Config, error) {
 		JWTSecret:                getString(values, "JWT_SECRET", ""),
 		RequestTimeout:           time.Duration(getInt(values, "REQUEST_TIMEOUT_SECONDS", 25)) * time.Second,
 		RawRetentionDays:         getInt(values, "RAW_RETENTION_DAYS", 3),
+		RawRequestKeepLatest:     getInt(values, "RAW_REQUEST_KEEP_LATEST_PER_SCOPE", 100),
 		AggregateRetentionDays:   getInt(values, "AGGREGATE_RETENTION_DAYS", 30),
-		DeviceOfflineSeconds:     getInt(values, "DEVICE_OFFLINE_SECONDS", 20),
-		DeviceOfflineMinutes:     getInt(values, "DEVICE_OFFLINE_MINUTES", 2),
+		DeviceOfflineSeconds:     getInt(values, "DEVICE_OFFLINE_SECONDS", 0),
+		DeviceOfflineMinutes:     getInt(values, "DEVICE_OFFLINE_MINUTES", 0),
 		HeartbeatIntervalSeconds: getInt(values, "HEARTBEAT_INTERVAL_SECONDS", 5),
 		PresenceFlushSeconds:     getInt(values, "PRESENCE_FLUSH_SECONDS", 5),
 		PersistQueueSize:         getInt(values, "PERSIST_QUEUE_SIZE", 131072),
@@ -80,12 +82,12 @@ func Load() (Config, error) {
 		ClientMaxInFlight:        getInt(values, "CLIENT_MAX_IN_FLIGHT", 256),
 		TimeZone:                 getString(values, "TIME_ZONE", "Asia/Shanghai"),
 		BootstrapAdminUser:       getString(values, "BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminPass:       getString(values, "BOOTSTRAP_ADMIN_PASSWORD", "123456"),
+		BootstrapAdminPass:       getString(values, "BOOTSTRAP_ADMIN_PASSWORD", ""),
 		MySQL: MySQLConfig{
-			Host:                   getString(values, "MYSQL_HOST", "101.33.243.78"),
+			Host:                   getString(values, "MYSQL_HOST", "mysql"),
 			Port:                   getInt(values, "MYSQL_PORT", 3306),
 			User:                   getString(values, "MYSQL_USER", "root"),
-			Password:               getString(values, "MYSQL_PASSWORD", "QiLongZhuDamo!@"),
+			Password:               getString(values, "MYSQL_PASSWORD", ""),
 			DB:                     getString(values, "MYSQL_DB", "r0rpc"),
 			Params:                 getString(values, "MYSQL_PARAMS", "charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai&timeout=5s&readTimeout=30s&writeTimeout=30s"),
 			MaxOpenConns:           getInt(values, "MYSQL_MAX_OPEN_CONNS", 256),
@@ -93,17 +95,32 @@ func Load() (Config, error) {
 			ConnMaxLifetimeMinutes: getInt(values, "MYSQL_CONN_MAX_LIFETIME_MINUTES", 10),
 		},
 		Redis: RedisConfig{
-			Addr:     getString(values, "REDIS_ADDR", "101.33.243.78:6380"),
-			Password: getString(values, "REDIS_PASSWORD", "QiLongZhuDamo!@"),
-			DB:       getInt(values, "REDIS_DB", 8),
+			Addr:     getString(values, "REDIS_ADDR", ""),
+			Password: getString(values, "REDIS_PASSWORD", ""),
+			DB:       getInt(values, "REDIS_DB", 0),
 		},
 	}
 
 	if strings.TrimSpace(cfg.JWTSecret) == "" {
 		return Config{}, fmt.Errorf("JWT_SECRET is required in %s", path)
 	}
+	if strings.TrimSpace(cfg.BootstrapAdminPass) == "" {
+		return Config{}, fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD is required in %s", path)
+	}
+	if strings.TrimSpace(cfg.MySQL.Host) == "" {
+		return Config{}, fmt.Errorf("MYSQL_HOST is required in %s", path)
+	}
+	if strings.TrimSpace(cfg.MySQL.User) == "" {
+		return Config{}, fmt.Errorf("MYSQL_USER is required in %s", path)
+	}
+	if strings.TrimSpace(cfg.MySQL.DB) == "" {
+		return Config{}, fmt.Errorf("MYSQL_DB is required in %s", path)
+	}
 	if cfg.RawRetentionDays <= 0 {
 		cfg.RawRetentionDays = 3
+	}
+	if cfg.RawRequestKeepLatest <= 0 {
+		cfg.RawRequestKeepLatest = 100
 	}
 	if cfg.AggregateRetentionDays <= 0 {
 		cfg.AggregateRetentionDays = 30

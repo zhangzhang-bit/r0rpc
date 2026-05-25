@@ -42,7 +42,27 @@ What it does:
 
 ## Config Switches
 
-Edit `.env.docker` if you want to use your own database or Redis.
+All deployment config is centralized in:
+
+- template: `.env.example`
+- active config: `.env.docker`
+
+`quickstart.sh` and `deploy.sh` create `.env.docker` from `.env.example` when it does not exist.
+Edit `.env.docker` before starting if you want to change passwords, retention, heartbeat, queues, or external MySQL/Redis.
+
+The most commonly tuned values are:
+
+```text
+DEVICE_OFFLINE_SECONDS=20
+HEARTBEAT_INTERVAL_SECONDS=5
+PRESENCE_FLUSH_SECONDS=5
+RAW_RETENTION_DAYS=3
+RAW_REQUEST_KEEP_LATEST_PER_SCOPE=100
+AGGREGATE_RETENTION_DAYS=30
+REQUEST_TIMEOUT_SECONDS=25
+```
+
+Edit these switches if you want to use your own database or Redis.
 
 ```text
 MYSQL_MODE=builtin
@@ -110,4 +130,4 @@ Stop services:
 
 - management UI: `http://YOUR_SERVER_IP:9876/`
 - health check: `http://YOUR_SERVER_IP:9876/healthz`
-- bootstrap admin: `admin / 123456` unless you changed it in `.env.docker`
+- bootstrap admin: `BOOTSTRAP_ADMIN_USERNAME / BOOTSTRAP_ADMIN_PASSWORD` from `.env.docker`

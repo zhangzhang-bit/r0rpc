@@ -85,6 +85,8 @@ type WeeklyMetric struct {
 
 type GroupInfo struct {
 	GroupName     string     `json:"group"`
+	Enabled       bool       `json:"enabled"`
+	Notes         string     `json:"notes"`
 	TotalDevices  int64      `json:"totalDevices"`
 	OnlineDevices int64      `json:"onlineDevices"`
 	Requests7d    int64      `json:"requests7d"`
@@ -94,6 +96,8 @@ type GroupInfo struct {
 	Status        string     `json:"status"`
 	StatusLabel   string     `json:"statusLabel"`
 	SuccessRate   float64    `json:"successRate"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
 type TrendPoint struct {

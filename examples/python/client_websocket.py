@@ -61,6 +61,17 @@ class WebSocketClient:
         self.token = body['token']
         self.ws_url = body.get('wsUrl') or self._build_ws_url()
 
+    def _clear_session(self):
+        self.token = ''
+        self.ws_url = ''
+
+    def _is_auth_error(self, exc: Exception) -> bool:
+        status_code = getattr(exc, 'status_code', None)
+        if status_code == 401:
+            return True
+        message = str(exc).lower()
+        return '401' in message or 'unauthorized' in message or 'handshake status 401' in message
+
     def _build_ws_url(self) -> str:
         if self.base_url.startswith('https://'):
             base = 'wss://' + self.base_url[len('https://'):]
@@ -114,12 +125,12 @@ class WebSocketClient:
         sock.send(json.dumps({'type': 'result', 'result': result}, ensure_ascii=False))
 
     def serve_forever(self):
-        if not self.token:
-            self.login()
         self._running = True
         while self._running:
             sock = None
             try:
+                if not self.token:
+                    self.login()
                 sock = websocket.create_connection(self.ws_url or self._build_ws_url(), timeout=30)
                 self._socket = sock
                 heartbeat = threading.Thread(target=self._heartbeat_loop, args=(sock,), daemon=True)
@@ -131,12 +142,10 @@ class WebSocketClient:
                     message = json.loads(raw)
                     if message.get('type') == 'job' and message.get('job'):
                         self._handle_job(sock, message['job'])
-            except Exception:
+            except Exception as exc:
+                if self._is_auth_error(exc):
+                    self._clear_session()
                 time.sleep(2)
-                if not self._running:
-                    break
-                if not self.token:
-                    self.login()
             finally:
                 self._socket = None
                 if sock is not None:

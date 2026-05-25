@@ -30,9 +30,9 @@
         <h2>&#21518;&#21488;&#30331;&#24405;</h2>
         <form id="loginForm" class="stack">
           <label><span>&#29992;&#25143;&#21517;</span><input name="username" value="admin" required /></label>
-          <label><span>&#23494;&#30721;</span><input name="password" type="password" value="Admin@123456" required /></label>
+          <label><span>&#23494;&#30721;</span><input name="password" type="password" required /></label>
           <button id="loginSubmitBtn" class="primary" type="submit">&#30331;&#24405;</button>
-          <p class="login-hint muted">&#36825;&#37324;&#39044;&#22635;&#20102;&#26412;&#22320;&#40664;&#35748;&#31649;&#29702;&#21592;&#36134;&#21495;&#12290;</p>
+          <p class="login-hint muted">&#20351;&#29992; .env.docker &#37324;&#30340;&#21518;&#21488;&#31649;&#29702;&#21592;&#36134;&#21495;&#21644;&#23494;&#30721;&#30331;&#24405;&#12290;</p>
           <p id="loginError" class="login-error hidden"></p>
         </form>
       </section>
@@ -75,15 +75,15 @@
           <div class="chart-grid">
             <div class="chart-card">
               <h4>&#27599;&#26085;&#35831;&#27714;&#37327;</h4>
-              <canvas id="requestsChart" height="220"></canvas>
+              <canvas id="requestsChart" height="170"></canvas>
             </div>
             <div class="chart-card">
               <h4>&#27599;&#26085;&#25104;&#21151;&#29575;</h4>
-              <canvas id="successRateChart" height="220"></canvas>
+              <canvas id="successRateChart" height="170"></canvas>
             </div>
-            <div class="chart-card span-2">
+            <div class="chart-card">
               <h4>&#27599;&#26085;&#24179;&#22343;&#24310;&#36831;</h4>
-              <canvas id="latencyChart" height="220"></canvas>
+              <canvas id="latencyChart" height="170"></canvas>
             </div>
           </div>
         </article>
@@ -98,10 +98,20 @@
             </div>
             <button id="reloadGroupsBtn" class="ghost" type="button">&#21047;&#26032; Group</button>
           </div>
+          <form id="createGroupForm" class="toolbar-row compact-toolbar">
+            <input name="name" placeholder="&#26032; group &#21517;&#31216;" required />
+            <select name="enabled">
+              <option value="true">&#21551;&#29992;</option>
+              <option value="false">&#31105;&#29992;</option>
+            </select>
+            <input name="notes" placeholder="&#22791;&#27880;&#65288;&#21487;&#36873;&#65289;" />
+            <button class="primary" type="submit">&#21019;&#24314; Group</button>
+          </form>
           <form id="groupFilterForm" class="toolbar-row">
             <input name="keyword" placeholder="&#25628;&#32034; group" />
             <select name="status">
               <option value="">&#20840;&#37096;&#29366;&#24577;</option>
+              <option value="disabled">disabled</option>
               <option value="online">online</option>
               <option value="offline">offline</option>
               <option value="stale">stale</option>
@@ -131,6 +141,7 @@
               <thead>
                 <tr>
                   <th>Group</th>
+                  <th>&#21551;&#29992;</th>
                   <th>&#29366;&#24577;</th>
                   <th>&#35774;&#22791;&#25968;</th>
                   <th>&#22312;&#32447;&#25968;</th>
@@ -138,6 +149,7 @@
                   <th>&#25104;&#21151;&#29575;</th>
                   <th>&#26368;&#21518;&#22312;&#32447;</th>
                   <th>&#26368;&#21518;&#35831;&#27714;</th>
+                  <th>&#22791;&#27880;</th>
                   <th>&#25805;&#20316;</th>
                 </tr>
               </thead>
@@ -341,25 +353,58 @@
       </section>
 
       <section id="page-invoke" class="page hidden">
-        <article class="panel">
-          <div class="panel-head split">
-            <div>
-              <h3>&#25163;&#21160;&#35843;&#29992; RPC</h3>
-              <p class="muted">&#36825;&#19968;&#39029;&#20250;&#23637;&#31034;&#23436;&#25972;&#35831;&#27714;&#20307;&#21644;&#23436;&#25972;&#21407;&#22987;&#36820;&#22238;&#20307;&#12290;</p>
+        <div class="invoke-workbench">
+          <article class="panel invoke-form-panel">
+            <div class="panel-head split">
+              <div>
+                <h3>RPC &#35843;&#35797;&#21488;</h3>
+                <p class="muted">&#36873;&#25321;&#24050;&#21551;&#29992; group&#65292;&#25353;&#24403;&#21069;&#22312;&#32447; client &#25110;&#33258;&#21160;&#36335;&#30001;&#21457;&#36215;&#35843;&#29992;&#12290;</p>
+              </div>
+              <button id="reloadInvokeContextBtn" class="ghost" type="button">&#21047;&#26032;&#19978;&#19979;&#25991;</button>
             </div>
-          </div>
-          <form id="invokeForm" class="form-grid">
-            <label><span>Group</span><input name="group" value="demo-group" required /></label>
-            <label><span>Action</span><input name="action" value="ping" required /></label>
-            <label><span>ClientId</span><input name="clientId" placeholder="&#21487;&#36873;&#65292;&#30041;&#31354;&#34920;&#31034;&#30001;&#26381;&#21153;&#31471;&#33258;&#21160;&#36335;&#30001;&#12290;" /></label>
-            <label><span>&#36229;&#26102;&#31186;&#25968;</span><input name="timeoutSeconds" type="number" min="1" max="120" value="20" /></label>
-            <label class="span-2"><span>Payload JSON</span><textarea name="payload">{
+            <form id="invokeForm" class="invoke-form">
+              <div class="form-grid">
+                <label><span>Group</span><select name="group" required><option value="">&#35831;&#36873;&#25321; group</option></select></label>
+                <label><span>Action</span><input name="action" list="invokeActionOptions" value="ping" required /></label>
+                <datalist id="invokeActionOptions"></datalist>
+                <label><span>ClientId</span><select name="clientId"><option value="">&#33258;&#21160;&#36335;&#30001;</option></select></label>
+                <label><span>&#36229;&#26102;&#31186;&#25968;</span><input name="timeoutSeconds" type="number" min="1" max="119" value="20" /></label>
+                <label class="span-2"><span>Payload JSON</span><textarea name="payload">{
   "msg": "hello from console"
 }</textarea></label>
-            <button class="primary" type="submit">&#21457;&#36215;&#35843;&#29992;</button>
-          </form>
-          <pre id="invokeResult" class="code-block">&#31561;&#24453;&#35843;&#29992;&#32467;&#26524;...</pre>
-        </article>
+              </div>
+              <div class="invoke-actions">
+                <button class="primary" type="submit">&#21457;&#36215;&#35843;&#29992;</button>
+                <button id="invokeFormatPayloadBtn" class="ghost" type="button">&#26684;&#24335;&#21270; JSON</button>
+              </div>
+            </form>
+          </article>
+
+          <article class="panel invoke-result-panel">
+            <div class="panel-head split">
+              <div>
+                <h3>&#35843;&#29992;&#29366;&#24577;</h3>
+                <p class="muted" id="invokeResponseMeta">&#31561;&#24453;&#21457;&#36215;&#35843;&#29992;</p>
+              </div>
+              <div id="invokeStatusBadge" class="badge warn">Ready</div>
+            </div>
+            <div id="invokeSummaryCards" class="cards compact-cards"></div>
+            <div class="invoke-result-grid">
+              <section class="invoke-preview-block">
+                <div class="request-detail-block-head">
+                  <h4>&#35831;&#27714;&#39044;&#35272;</h4>
+                </div>
+                <pre id="invokeRequestPreview" class="code-block compact-code">-</pre>
+              </section>
+              <section class="invoke-preview-block">
+                <div class="request-detail-block-head">
+                  <h4>&#21407;&#22987;&#21709;&#24212;</h4>
+                </div>
+                <pre id="invokeResult" class="code-block compact-code">&#31561;&#24453;&#35843;&#29992;&#32467;&#26524;...</pre>
+              </section>
+            </div>
+          </article>
+        </div>
       </section>
     </section>
   </main>

@@ -37,6 +37,9 @@ const state = {
   weekly: [],
   daily: [],
   users: [],
+  invokeActionOptions: [],
+  invokeLastResult: null,
+  invokePending: false,
   requestDetailCopy: { request: '-', response: '-' }
 };
 
@@ -57,6 +60,7 @@ const el = {
   topbar: document.getElementById('topbar'),
   overviewCards: document.getElementById('overviewCards'),
   trendFilterForm: document.getElementById('trendFilterForm'),
+  createGroupForm: document.getElementById('createGroupForm'),
   groupFilterForm: document.getElementById('groupFilterForm'),
   groupSummaryCards: document.getElementById('groupSummaryCards'),
   groupsBody: document.getElementById('groupsBody'),
@@ -100,6 +104,12 @@ const el = {
   reloadUsersBtn: document.getElementById('reloadUsersBtn'),
   invokeForm: document.getElementById('invokeForm'),
   invokeResult: document.getElementById('invokeResult'),
+  invokeSummaryCards: document.getElementById('invokeSummaryCards'),
+  invokeRequestPreview: document.getElementById('invokeRequestPreview'),
+  invokeResponseMeta: document.getElementById('invokeResponseMeta'),
+  invokeStatusBadge: document.getElementById('invokeStatusBadge'),
+  invokeFormatPayloadBtn: document.getElementById('invokeFormatPayloadBtn'),
+  reloadInvokeContextBtn: document.getElementById('reloadInvokeContextBtn'),
   toast: document.getElementById('toast'),
   requestsChart: document.getElementById('requestsChart'),
   successRateChart: document.getElementById('successRateChart'),
@@ -173,6 +183,9 @@ function bindEvents() {
       renderGroupManagement();
     });
   }
+  if (el.createGroupForm) {
+    el.createGroupForm.addEventListener('submit', onCreateGroup);
+  }
   if (el.groupsPrevBtn) {
     el.groupsPrevBtn.addEventListener('click', () => {
       state.groupsPage = Math.max(1, state.groupsPage - 1);
@@ -245,7 +258,13 @@ function bindEvents() {
   }
   if (el.invokeForm) {
     el.invokeForm.addEventListener('submit', onInvoke);
+    el.invokeForm.addEventListener('input', handleInvokeFormChange);
+    el.invokeForm.addEventListener('change', handleInvokeFormChange);
   }
+  if (el.invokeFormatPayloadBtn) {
+    el.invokeFormatPayloadBtn.addEventListener('click', formatInvokePayload);
+  }
+  bindRefreshButton(el.reloadInvokeContextBtn, loadInvokeWorkspace, { idle: '\u5237\u65b0\u4e0a\u4e0b\u6587', loading: '\u5237\u65b0\u4e2d...', success: '\u8c03\u8bd5\u4e0a\u4e0b\u6587\u5df2\u5237\u65b0' });
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.token) {
@@ -410,6 +429,7 @@ async function refreshCurrentPage() {
       await loadUsers();
       break;
     case 'invoke':
+      await loadInvokeWorkspace();
       break;
     default:
       break;
@@ -523,7 +543,7 @@ function renderOverview() {
   const successRate = totalRequests ? ((totalSuccess * 100) / totalRequests).toFixed(1) : '0.0';
   const totalGroups = state.groups.length;
   const onlineGroups = state.groups.filter((item) => item.status === 'online').length;
-  const staleGroups = state.groups.filter((item) => item.status === 'stale').length;
+  const disabledGroups = state.groups.filter((item) => !item.enabled).length;
   const noDeviceGroups = state.groups.filter((item) => item.status === 'no_device').length;
   const days = Math.max(3, Math.min(30, Number(el.trendFilterForm?.elements?.namedItem('days')?.value || 7) || 7));
   const overviewHeading = document.querySelector('#page-overview .page-intro h3');
@@ -536,7 +556,7 @@ function renderOverview() {
     { label: `${days} \u5929\u8bf7\u6c42\u91cf`, value: String(totalRequests), foot: `${totalSuccess} \u6b21\u6210\u529f` },
     { label: `${days} \u5929\u6210\u529f\u7387`, value: `${successRate}%`, foot: '\u6210\u529f\u8bf7\u6c42 / \u603b\u8bf7\u6c42' },
     { label: '\u5e73\u5747\u5ef6\u8fdf', value: `${avgLatency} ms`, foot: '\u6309\u8bf7\u6c42\u91cf\u52a0\u6743' },
-    { label: 'Group \u5065\u5eb7\u5ea6', value: `${onlineGroups}/${totalGroups}`, foot: `${staleGroups} \u4e2a\u957f\u671f\u4e0d\u6d3b\u8dc3\uff0c${noDeviceGroups} \u4e2a\u65e0\u8bbe\u5907` }
+    { label: 'Group \u5065\u5eb7\u5ea6', value: `${onlineGroups}/${totalGroups}`, foot: `${disabledGroups} \u4e2a\u7981\u7528\uff0c${noDeviceGroups} \u4e2a\u65e0\u8bbe\u5907` }
   ];
 
   el.overviewCards.innerHTML = cards.map((card) => cardTemplate(card)).join('');
@@ -570,17 +590,18 @@ function renderGroupManagement() {
   const pageItems = filtered.slice(start, start + pageSize);
 
   const summaryCards = [
-    { label: '\u5168\u90e8 Group', value: state.groups.length, foot: '\u5386\u53f2\u51fa\u73b0\u8fc7\u7684 group' },
+    { label: '\u5168\u90e8 Group', value: state.groups.length, foot: '\u9700\u5148\u521b\u5efa\u540e\u4f7f\u7528' },
+    { label: '\u542f\u7528 Group', value: state.groups.filter((item) => item.enabled).length, foot: '\u5141\u8bb8 client \u63a5\u5165\u548c RPC \u8c03\u7528' },
     { label: '\u5728\u7ebf Group', value: state.groups.filter((item) => item.status === 'online').length, foot: '\u5f53\u524d\u81f3\u5c11\u6709\u4e00\u53f0\u5728\u7ebf\u8bbe\u5907' },
-    { label: '\u79bb\u7ebf Group', value: state.groups.filter((item) => item.status === 'offline').length, foot: '\u6709\u8bbe\u5907\u4f46\u5f53\u524d\u90fd\u4e0d\u5728\u7ebf' },
-    { label: '\u957f\u671f\u4e0d\u6d3b\u8dc3', value: state.groups.filter((item) => item.status === 'stale').length, foot: '7 \u5929\u4ee5\u4e0a\u6ca1\u6709\u8bbe\u5907\u5728\u7ebf' },
-    { label: '\u957f\u671f\u65e0\u8bbe\u5907', value: state.groups.filter((item) => item.status === 'no_device').length, foot: '\u53ea\u6709\u5386\u53f2\u8bf7\u6c42\uff0c\u6ca1\u6709\u73b0\u5b58\u8bbe\u5907' }
+    { label: '\u7981\u7528 Group', value: state.groups.filter((item) => !item.enabled).length, foot: '\u4f1a\u62d2\u7edd\u63a5\u5165\u548c\u8c03\u7528' },
+    { label: '\u65e0\u8bbe\u5907 Group', value: state.groups.filter((item) => item.status === 'no_device').length, foot: '\u5df2\u521b\u5efa\uff0c\u4f46\u6682\u65e0 client \u63a5\u5165' }
   ];
   el.groupSummaryCards.innerHTML = summaryCards.map((card) => cardTemplate(card)).join('');
 
-  el.groupsBody.innerHTML = renderRows(pageItems, 9, (item) => `
+  el.groupsBody.innerHTML = renderRows(pageItems, 11, (item) => `
     <tr>
       <td>${escapeHTML(item.group)}</td>
+      <td>${boolBadge(Boolean(item.enabled), '\u542f\u7528', '\u7981\u7528')}</td>
       <td>${statusBadge(item.status)}</td>
       <td>${Number(item.totalDevices || 0)}</td>
       <td>${Number(item.onlineDevices || 0)}</td>
@@ -588,7 +609,13 @@ function renderGroupManagement() {
       <td>${Number(item.successRate || 0).toFixed(1)}%</td>
       <td>${formatDate(item.lastSeenAt)}</td>
       <td>${formatDate(item.lastRequestAt)}</td>
-      <td><button class="ghost mini-btn" type="button" onclick="openGroupClients('${escapeJS(item.group)}')">\u67e5\u770b Client</button></td>
+      <td>${escapeHTML(item.notes || '-')}</td>
+      <td>
+        <div class="actions">
+          <button class="ghost mini-btn" type="button" onclick="openGroupClients('${escapeJS(item.group)}')">\u67e5\u770b Client</button>
+          <button class="ghost mini-btn" type="button" onclick="toggleGroupEnabled('${escapeJS(item.group)}', ${item.enabled ? 'false' : 'true'})">${item.enabled ? '\u7981\u7528' : '\u542f\u7528'}</button>
+        </div>
+      </td>
     </tr>
   `, '\u6682\u65e0\u5339\u914d\u7684 group');
 
@@ -1319,6 +1346,31 @@ async function loadUsers() {
   `, '\u6682\u65e0\u8d26\u6237\u6570\u636e');
 }
 
+async function onCreateGroup(event) {
+  event.preventDefault();
+  const form = new FormData(el.createGroupForm);
+  await request('/api/groups', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: String(form.get('name') || '').trim(),
+      enabled: String(form.get('enabled') || 'true') === 'true',
+      notes: String(form.get('notes') || '').trim()
+    })
+  });
+  el.createGroupForm.reset();
+  toast('Group \u5df2\u521b\u5efa');
+  await loadGroupManagement();
+}
+
+async function toggleGroupEnabled(groupName, enabled) {
+  await request('/api/groups/' + encodeURIComponent(groupName) + '/status', {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled })
+  });
+  toast(enabled ? 'Group \u5df2\u542f\u7528' : 'Group \u5df2\u7981\u7528');
+  await loadGroupManagement();
+}
+
 async function onCreateUser(event) {
   event.preventDefault();
   const form = new FormData(el.createUserForm);
@@ -1368,47 +1420,196 @@ async function resetUserPassword(userId, username) {
   toast(username + ' \u7684\u5bc6\u7801\u5df2\u91cd\u7f6e');
 }
 
+async function loadInvokeWorkspace() {
+  if (!el.invokeForm) {
+    return;
+  }
+  const current = getInvokeFormValues(false);
+  const [groupsResp, devicesResp] = await Promise.all([
+    request('/api/groups', { method: 'GET' }),
+    request('/api/devices?limit=200', { method: 'GET' })
+  ]);
+  state.groups = groupsResp.items || [];
+  state.groupClients = devicesResp.items || [];
+  fillInvokeGroupOptions(current.group);
+  await loadInvokeActionOptions();
+  updateInvokeClientOptions(current.clientId);
+  renderInvokeWorkbench();
+}
+
+function fillInvokeGroupOptions(preferredGroup) {
+  const groupSelect = el.invokeForm.elements.namedItem('group');
+  if (!groupSelect) {
+    return;
+  }
+  const enabledGroups = state.groups.filter((item) => item.enabled);
+  const options = ['<option value="">\u8bf7\u9009\u62e9 group</option>'].concat(
+    enabledGroups.map((item) => {
+      const online = Number(item.onlineDevices || 0);
+      const label = `${item.group} (${online} online)`;
+      return `<option value="${escapeHTML(item.group)}">${escapeHTML(label)}</option>`;
+    })
+  );
+  groupSelect.innerHTML = options.join('');
+  if (enabledGroups.some((item) => item.group === preferredGroup)) {
+    groupSelect.value = preferredGroup;
+  } else if (enabledGroups.length > 0) {
+    groupSelect.value = enabledGroups[0].group;
+  } else {
+    groupSelect.value = '';
+  }
+}
+
+async function loadInvokeActionOptions() {
+  const values = getInvokeFormValues(false);
+  if (!values.group) {
+    state.invokeActionOptions = [];
+    fillInvokeActionDatalist();
+    return;
+  }
+  try {
+    const data = await fetchRequestFilterOptions({ group: values.group });
+    state.invokeActionOptions = data.actions || [];
+  } catch {
+    state.invokeActionOptions = [];
+  }
+  fillInvokeActionDatalist();
+}
+
+function fillInvokeActionDatalist() {
+  const datalist = document.getElementById('invokeActionOptions');
+  if (!datalist) {
+    return;
+  }
+  datalist.innerHTML = Array.from(new Set(state.invokeActionOptions || []))
+    .filter(Boolean)
+    .map((item) => `<option value="${escapeHTML(item)}"></option>`)
+    .join('');
+}
+
+function updateInvokeClientOptions(preferredClientId) {
+  const clientSelect = el.invokeForm.elements.namedItem('clientId');
+  if (!clientSelect) {
+    return;
+  }
+  const group = String(el.invokeForm.elements.namedItem('group')?.value || '').trim();
+  const clients = state.groupClients
+    .filter((item) => String(item.group || '') === group)
+    .filter((item) => String(item.status || '') === 'online')
+    .sort((a, b) => String(a.clientId || '').localeCompare(String(b.clientId || ''), 'zh-CN'));
+  const options = ['<option value="">\u81ea\u52a8\u8def\u7531</option>'].concat(
+    clients.map((item) => {
+      const pending = Number(item.pendingCount || 0);
+      const inFlight = Number(item.inFlight || 0);
+      const label = `${item.clientId} (${inFlight} running / ${pending} pending)`;
+      return `<option value="${escapeHTML(item.clientId)}">${escapeHTML(label)}</option>`;
+    })
+  );
+  clientSelect.innerHTML = options.join('');
+  if (clients.some((item) => item.clientId === preferredClientId)) {
+    clientSelect.value = preferredClientId;
+  } else {
+    clientSelect.value = '';
+  }
+}
+
+function handleInvokeFormChange(event) {
+  const fieldName = event && event.target ? event.target.name : '';
+  state.invokeLastResult = null;
+  state.invokePending = false;
+  if (fieldName === 'group') {
+    updateInvokeClientOptions('');
+    loadInvokeActionOptions().catch(handleError);
+  }
+  renderInvokeWorkbench();
+}
+
+function formatInvokePayload() {
+  const payloadInput = el.invokeForm.elements.namedItem('payload');
+  if (!payloadInput) {
+    return;
+  }
+  try {
+    const parsed = JSON.parse(String(payloadInput.value || '{}'));
+    payloadInput.value = JSON.stringify(parsed, null, 2);
+    renderInvokeWorkbench();
+    toast('Payload JSON \u5df2\u683c\u5f0f\u5316');
+  } catch (error) {
+    toast('Payload JSON \u683c\u5f0f\u9519\u8bef: ' + error.message);
+  }
+}
+
 async function onInvoke(event) {
   event.preventDefault();
-  const form = new FormData(el.invokeForm);
-  let payload = {};
-  const raw = String(form.get('payload') || '').trim();
-  if (raw) {
-    payload = JSON.parse(raw);
+  let values;
+  try {
+    values = getInvokeFormValues(true);
+  } catch (error) {
+    toast('Payload JSON \u683c\u5f0f\u9519\u8bef: ' + error.message);
+    renderInvokeWorkbench();
+    return;
   }
-
-  const group = String(form.get('group') || '').trim();
-  const action = String(form.get('action') || '').trim();
+  const group = values.group;
+  const action = values.action;
   const requestUrl = `/rpc/invoke/${encodeURIComponent(group)}/${encodeURIComponent(action)}`;
   const requestBody = {
-    clientId: String(form.get('clientId') || '').trim(),
-    timeoutSeconds: Number(form.get('timeoutSeconds') || 20),
-    payload
+    clientId: values.clientId,
+    timeoutSeconds: values.timeoutSeconds,
+    payload: values.payload
   };
 
   try {
+    state.invokeLastResult = null;
+    state.invokePending = true;
+    setInvokeStatus('pending', 0);
+    renderInvokeWorkbench();
     const result = await requestWithMeta(requestUrl, {
       method: 'POST',
       body: JSON.stringify(requestBody)
     });
-    el.invokeResult.textContent = JSON.stringify(buildInvokeConsoleResult(requestUrl, requestBody, result.status, result.data), null, 2);
-    toast('\\u8c03\\u7528\\u6210\\u529f');
+    state.invokePending = false;
+    state.invokeLastResult = buildInvokeConsoleResult(requestUrl, requestBody, result.status, result.data);
+    renderInvokeWorkbench();
+    toast(result.data && result.data.is_ok === false ? '\u8c03\u7528\u5df2\u8fd4\u56de\u5931\u8d25\u72b6\u6001' : '\u8c03\u7528\u6210\u529f');
   } catch (error) {
+    state.invokePending = false;
     const detail = error && typeof error === 'object' && typeof error.payload !== 'undefined'
       ? error.payload
       : { error: error?.message || String(error) };
-    el.invokeResult.textContent = JSON.stringify(
-      buildInvokeConsoleResult(requestUrl, requestBody, Number(error?.status || 0) || 500, detail),
-      null,
-      2
-    );
-    toast(detail.error || '\\u8c03\\u7528\\u5931\\u8d25');
+    state.invokeLastResult = buildInvokeConsoleResult(requestUrl, requestBody, Number(error?.status || 0) || 500, detail);
+    renderInvokeWorkbench();
+    toast(detail.error || '\u8c03\u7528\u5931\u8d25');
   }
+}
+
+function getInvokeFormValues(strictPayload) {
+  const form = new FormData(el.invokeForm);
+  const rawPayload = String(form.get('payload') || '').trim();
+  let payload = {};
+  if (rawPayload) {
+    if (strictPayload) {
+      payload = JSON.parse(rawPayload);
+    } else {
+      try {
+        payload = JSON.parse(rawPayload);
+      } catch {
+        payload = rawPayload;
+      }
+    }
+  }
+  return {
+    group: String(form.get('group') || '').trim(),
+    action: String(form.get('action') || '').trim(),
+    clientId: String(form.get('clientId') || '').trim(),
+    timeoutSeconds: Number(form.get('timeoutSeconds') || 20) || 20,
+    payload
+  };
 }
 
 function buildInvokeConsoleResult(requestUrl, requestBody, status, responseBody) {
   return {
     request: {
+      method: 'POST',
       url: requestUrl,
       body: requestBody
     },
@@ -1417,6 +1618,87 @@ function buildInvokeConsoleResult(requestUrl, requestBody, status, responseBody)
       body: responseBody
     }
   };
+}
+
+function renderInvokeWorkbench() {
+  if (!el.invokeForm) {
+    return;
+  }
+  const values = getInvokeFormValues(false);
+  const requestUrl = values.group && values.action
+    ? `/rpc/invoke/${encodeURIComponent(values.group)}/${encodeURIComponent(values.action)}`
+    : '/rpc/invoke/{group}/{action}';
+  const body = {
+    clientId: values.clientId,
+    timeoutSeconds: values.timeoutSeconds,
+    payload: values.payload
+  };
+  const group = state.groups.find((item) => item.group === values.group);
+  const onlineClients = state.groupClients.filter((item) => item.group === values.group && item.status === 'online');
+  const routeLabel = values.clientId || '\u81ea\u52a8\u8def\u7531';
+  const cards = [
+    { label: 'Group', value: values.group || '-', foot: group ? (group.enabled ? '\u5df2\u542f\u7528' : '\u5df2\u7981\u7528') : '\u672a\u9009\u62e9' },
+    { label: '\u5728\u7ebf Client', value: onlineClients.length, foot: values.group ? '\u5f53\u524d group \u53ef\u8def\u7531\u7684 client' : '\u8bf7\u5148\u9009\u62e9 group' },
+    { label: 'Action', value: values.action || '-', foot: state.invokeActionOptions.includes(values.action) ? '\u5386\u53f2 action' : '\u624b\u52a8\u8f93\u5165' },
+    { label: '\u8def\u7531', value: routeLabel, foot: values.clientId ? '\u6307\u5b9a client' : '\u670d\u52a1\u7aef\u8f6e\u8be2' }
+  ];
+  if (el.invokeSummaryCards) {
+    el.invokeSummaryCards.innerHTML = cards.map((card) => cardTemplate(card)).join('');
+  }
+  if (el.invokeRequestPreview) {
+    el.invokeRequestPreview.textContent = JSON.stringify({
+      method: 'POST',
+      url: requestUrl,
+      body
+    }, null, 2);
+  }
+  renderInvokeResult();
+}
+
+function renderInvokeResult() {
+  if (state.invokePending) {
+    setInvokeStatus('pending', 0);
+    if (el.invokeResponseMeta) {
+      el.invokeResponseMeta.textContent = '\u6b63\u5728\u7b49\u5f85\u8bbe\u5907\u8fd4\u56de';
+    }
+    if (el.invokeResult) {
+      el.invokeResult.textContent = '\u8bf7\u6c42\u5df2\u53d1\u51fa\uff0c\u6b63\u5728\u7b49\u5f85\u54cd\u5e94...';
+    }
+    return;
+  }
+  const result = state.invokeLastResult;
+  if (!result) {
+    setInvokeStatus('ready', 0);
+    if (el.invokeResponseMeta) {
+      el.invokeResponseMeta.textContent = '\u7b49\u5f85\u53d1\u8d77\u8c03\u7528';
+    }
+    if (el.invokeResult) {
+      el.invokeResult.textContent = '\u7b49\u5f85\u8c03\u7528\u7ed3\u679c...';
+    }
+    return;
+  }
+
+  const body = result.response && result.response.body ? result.response.body : {};
+  const status = body.status || (body.is_ok === true ? 'success' : 'error');
+  setInvokeStatus(status, result.response.httpStatus);
+  if (el.invokeResponseMeta) {
+    const requestId = body.requestId || '-';
+    const clientId = body.clientId || '-';
+    const latency = Number(body.latencyMs || 0);
+    el.invokeResponseMeta.textContent = `HTTP ${result.response.httpStatus} / requestId ${requestId} / client ${clientId} / ${latency} ms`;
+  }
+  if (el.invokeResult) {
+    el.invokeResult.textContent = JSON.stringify(result, null, 2);
+  }
+}
+
+function setInvokeStatus(status, httpStatus) {
+  if (!el.invokeStatusBadge) {
+    return;
+  }
+  const value = String(status || 'ready');
+  el.invokeStatusBadge.className = 'badge ' + escapeHTML(value);
+  el.invokeStatusBadge.textContent = httpStatus ? `${statusText(value)} / ${httpStatus}` : statusText(value);
 }
 
 async function requestWithMeta(url, options = {}, auth = true) {
@@ -1506,6 +1788,8 @@ function formatDate(value) {
 
 function statusText(status) {
   switch (String(status || '')) {
+    case 'ready': return 'Ready';
+    case 'pending': return 'Pending';
     case 'online': return 'Online';
     case 'offline': return 'Offline';
     case 'stale': return 'Stale';
@@ -1515,6 +1799,8 @@ function statusText(status) {
     case 'error': return 'Error';
     case 'rejected': return 'Rejected';
     case 'no_client': return 'No client';
+    case 'group_not_found': return 'Group missing';
+    case 'group_disabled': return 'Group disabled';
     case 'enabled': return '\u542f\u7528';
     case 'disabled': return '\u7981\u7528';
     default: return String(status || '-');
@@ -1800,6 +2086,7 @@ window.openGroupClients = openGroupClients;
 window.selectExplorerGroup = selectExplorerGroup;
 window.selectExplorerClient = selectExplorerClient;
 window.showDaily = showDaily;
+window.toggleGroupEnabled = toggleGroupEnabled;
 window.toggleUserEnabled = toggleUserEnabled;
 window.toggleUserRPC = toggleUserRPC;
 window.resetUserPassword = resetUserPassword;

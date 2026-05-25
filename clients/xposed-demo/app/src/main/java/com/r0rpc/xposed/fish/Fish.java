@@ -2,7 +2,6 @@ package com.r0rpc.xposed.fish;
 
 import android.app.Application;
 import android.content.Context;
-import android.os.Build;
 import android.provider.Settings;
 import android.util.Log;
 import android.widget.Toast;
@@ -23,6 +22,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class Fish {
     public static String TAG = "Fish";
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
+    private static final String RPC_HOST = "159.75.100.225";
+    private static final int RPC_PORT = 9876;
+    private static final String RPC_USERNAME = "admin";
+    private static final String RPC_PASSWORD = "123456";
+    private static final String RPC_GROUP = "idlefish";
 
     public static void entry(XC_LoadPackage.LoadPackageParam loadPackageParam) throws ClassNotFoundException {
         if (!loadPackageParam.processName.equals(loadPackageParam.packageName)) {
@@ -52,7 +56,8 @@ public class Fish {
         String androidId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
         Log.e(TAG, "context:" + context + " androidId:" + androidId);
         Toast.makeText(context, "androidId:" + androidId, Toast.LENGTH_LONG).show();
-        RelayClient relayClient = new RelayClient("159.75.100.225:9876", "admin", "123456", androidId, "idlefish", Build.MANUFACTURER).maxInFlight(1024);
+        String serverUrl = "http://" + RPC_HOST + ":" + RPC_PORT;
+        RelayClient relayClient = new RelayClient(serverUrl, RPC_USERNAME, RPC_PASSWORD, androidId, RPC_GROUP);
         relayClient.registerHandler("ping", new PingHandler());
         relayClient.registerHandler("decrypt", new DecryptHandler());
         relayClient.start();

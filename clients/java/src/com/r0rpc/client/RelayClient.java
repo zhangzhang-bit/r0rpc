@@ -60,14 +60,14 @@ public class RelayClient {
     private volatile String token;
     private volatile String wsUrl;
     private volatile long lastServerActivityAt;
-    private volatile int maxInFlight = 64;
+    private volatile int maxInFlight = 256;
     private volatile boolean running;
     private volatile Thread workerThread;
     private volatile ErrorHandler errorHandler;
     private volatile ThreadPoolExecutor jobExecutor;
 
     public RelayClient(String baseUrl, String username, String password, String clientId, String group) {
-        this(baseUrl, username, password, clientId, group, "android", 5000, 30000);
+        this(baseUrl, username, password, clientId, group, defaultPlatform(), 5000, 30000);
     }
 
     public RelayClient(String baseUrl, String username, String password, String clientId, String group,
@@ -82,9 +82,24 @@ public class RelayClient {
         this.password = password;
         this.clientId = clientId;
         this.group = group;
-        this.platform = platform;
+        this.platform = platform == null || platform.trim().isEmpty() ? defaultPlatform() : platform.trim();
         this.connectTimeoutMs = connectTimeoutMs;
         this.readTimeoutMs = readTimeoutMs;
+    }
+
+    private static String defaultPlatform() {
+        try {
+            Class<?> buildClass = Class.forName("android.os.Build");
+            Object value = buildClass.getField("MANUFACTURER").get(null);
+            if (value != null) {
+                String manufacturer = String.valueOf(value).trim();
+                if (!manufacturer.isEmpty()) {
+                    return manufacturer;
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+        return "android";
     }
 
     public RelayClient registerAction(String action, RpcHandler handler) {
@@ -747,8 +762,6 @@ public class RelayClient {
         try { socket.close(); } catch (Exception ignore) {}
     }
 }
-
-
 
 
 

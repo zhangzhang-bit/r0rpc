@@ -1,6 +1,6 @@
 import requests
 
-BASE_URL = 'http://159.75.100.225:9876/'
+BASE_URL = 'http://159.75.100.225:9876'
 ADMIN_USER = 'admin'
 ADMIN_PASS = '123456'
 
@@ -25,13 +25,14 @@ def query_seller_id(token, seller_id):
         }
     }
 
-    url = f'http://159.75.100.225:9876/rpc/invoke/idlefish/decrypt'
+    url = f'{BASE_URL}/rpc/invoke/idlefish/decrypt'
 
     resp = requests.post(url, headers=headers, json=_json, timeout=5)
+    resp.raise_for_status()
     print(resp.text)
 
 
+token = login()
 for i in range(100):
-    token = login()
     seller_id = 'v7eNwdELBmc1hOkagpP6NQ=='
     query_seller_id(token, seller_id)

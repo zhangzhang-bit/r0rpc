@@ -104,6 +104,24 @@ func BootstrapSchema(ctx context.Context, cfg config.Config) error {
 	if err := ensureIndexes(ctx, db, cfg.MySQL.DB); err != nil {
 		return err
 	}
+	if err := seedGroupsFromExistingData(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedGroupsFromExistingData(ctx context.Context, db *sql.DB) error {
+	queries := []string{
+		"INSERT IGNORE INTO `groups` (name, enabled, notes) SELECT DISTINCT group_name, 1, 'imported from existing devices' FROM devices WHERE COALESCE(TRIM(group_name), '') <> ''",
+		"INSERT IGNORE INTO `groups` (name, enabled, notes) SELECT DISTINCT group_name, 1, 'imported from existing requests' FROM rpc_requests WHERE COALESCE(TRIM(group_name), '') <> ''",
+		"INSERT IGNORE INTO `groups` (name, enabled, notes) SELECT DISTINCT group_name, 1, 'imported from existing metrics' FROM device_daily_metrics WHERE COALESCE(TRIM(group_name), '') <> ''",
+		"INSERT IGNORE INTO `groups` (name, enabled, notes) SELECT DISTINCT group_name, 1, 'imported from existing metrics' FROM rpc_daily_metrics WHERE COALESCE(TRIM(group_name), '') <> ''",
+	}
+	for _, query := range queries {
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -269,6 +287,64 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID int64, password s
 	}
 	_, err = s.DB.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ?", string(hash), userID)
 	return err
+}
+
+func (s *Store) CreateGroup(ctx context.Context, name string, enabled bool, notes string) (*model.GroupInfo, error) {
+	name, err := normalizeGroupName(name)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.DB.ExecContext(ctx, "INSERT INTO `groups` (name, enabled, notes) VALUES (?, ?, ?)", name, enabled, strings.TrimSpace(notes))
+	if err != nil {
+		if me, ok := err.(*mysql.MySQLError); ok && me.Number == 1062 {
+			return nil, fmt.Errorf("group already exists")
+		}
+		return nil, err
+	}
+	return s.GetGroupByName(ctx, name)
+}
+
+func (s *Store) GetGroupByName(ctx context.Context, name string) (*model.GroupInfo, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, sql.ErrNoRows
+	}
+	item := &model.GroupInfo{}
+	err := s.DB.QueryRowContext(ctx, "SELECT name, enabled, notes, created_at, updated_at FROM `groups` WHERE name = ?", name).Scan(&item.GroupName, &item.Enabled, &item.Notes, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Store) UpdateGroupStatus(ctx context.Context, name string, enabled bool) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return sql.ErrNoRows
+	}
+	res, err := s.DB.ExecContext(ctx, "UPDATE `groups` SET enabled = ? WHERE name = ?", enabled, name)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		return sql.ErrNoRows
+	}
+	return err
+}
+
+func normalizeGroupName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("group name required")
+	}
+	if len(name) > 128 {
+		return "", fmt.Errorf("group name must be 128 characters or fewer")
+	}
+	if strings.ContainsAny(name, "/\\?#") {
+		return "", fmt.Errorf("group name can not contain /, \\, ?, or #")
+	}
+	return name, nil
 }
 
 func (s *Store) UpsertDevice(ctx context.Context, clientID string, userID int64, groupName, platform, ip string, extra map[string]any) error {
@@ -1081,28 +1157,28 @@ func (s *Store) ListDevices(ctx context.Context, groupName, clientID, status str
 }
 
 func (s *Store) ListGroups(ctx context.Context) ([]model.GroupInfo, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT g.group_name, "+
+	rows, err := s.DB.QueryContext(ctx, "SELECT g.name, g.enabled, g.notes, g.created_at, g.updated_at, "+
 		"COALESCE(d.total_devices, 0) AS total_devices, "+
 		"COALESCE(d.online_devices, 0) AS online_devices, "+
 		"d.last_seen_at, "+
 		"COALESCE(m.requests_7d, 0) AS requests_7d, "+
 		"COALESCE(m.success_7d, 0) AS success_7d, "+
 		"m.last_request_at "+
-		"FROM (SELECT DISTINCT group_name FROM devices WHERE COALESCE(TRIM(group_name), '') <> '') g "+
+		"FROM `groups` g "+
 		"LEFT JOIN ("+
 		"  SELECT group_name, COUNT(*) AS total_devices, "+
 		"         SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) AS online_devices, "+
 		"         MAX(last_seen_at) AS last_seen_at "+
 		"  FROM devices GROUP BY group_name"+
-		") d ON d.group_name = g.group_name "+
+		") d ON d.group_name = g.name "+
 		"LEFT JOIN ("+
 		"  SELECT group_name, "+
 		"         SUM(CASE WHEN stat_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN total_requests ELSE 0 END) AS requests_7d, "+
 		"         SUM(CASE WHEN stat_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN success_requests ELSE 0 END) AS success_7d, "+
 		"         MAX(updated_at) AS last_request_at "+
 		"  FROM rpc_daily_metrics GROUP BY group_name"+
-		") m ON m.group_name = g.group_name "+
-		"ORDER BY g.group_name ASC",
+		") m ON m.group_name = g.name "+
+		"ORDER BY g.name ASC",
 	)
 	if err != nil {
 		return nil, err
@@ -1114,7 +1190,7 @@ func (s *Store) ListGroups(ctx context.Context) ([]model.GroupInfo, error) {
 		var item model.GroupInfo
 		var lastSeenAt sql.NullTime
 		var lastRequestAt sql.NullTime
-		if err := rows.Scan(&item.GroupName, &item.TotalDevices, &item.OnlineDevices, &lastSeenAt, &item.Requests7d, &item.Success7d, &lastRequestAt); err != nil {
+		if err := rows.Scan(&item.GroupName, &item.Enabled, &item.Notes, &item.CreatedAt, &item.UpdatedAt, &item.TotalDevices, &item.OnlineDevices, &lastSeenAt, &item.Requests7d, &item.Success7d, &lastRequestAt); err != nil {
 			return nil, err
 		}
 		if lastSeenAt.Valid {
@@ -1128,6 +1204,9 @@ func (s *Store) ListGroups(ctx context.Context) ([]model.GroupInfo, error) {
 		}
 		now := time.Now()
 		switch {
+		case !item.Enabled:
+			item.Status = "disabled"
+			item.StatusLabel = "Disabled"
 		case item.TotalDevices == 0:
 			item.Status = "no_device"
 			item.StatusLabel = "No Device"
