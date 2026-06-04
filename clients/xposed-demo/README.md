@@ -2,6 +2,8 @@
 
 This is the Android/Xposed demo project.
 
+For a Frida-based alternative, see [../android-frida-demo/README.md](../android-frida-demo/README.md).
+
 ## Important files
 
 - bundled relay jar: `app/libs/r0rpc-relay-client.jar`

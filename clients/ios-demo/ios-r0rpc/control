@@ -1,0 +1,9 @@
+Package: com.r0rpc.ios-demo
+Name: r0rpc-ios-demo
+Depends: mobilesubstrate (>= 0.9.5000)
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: R0RPC relay client demo for iOS (Theos tweak)
+Maintainer: r0rpc
+Author: r0rpc
+Section: Tweaks
